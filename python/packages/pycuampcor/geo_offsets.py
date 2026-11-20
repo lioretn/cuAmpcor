@@ -70,6 +70,10 @@ def create_parser():
                      help='Step between windows across (default: %(default)s).')
     win.add_argument('--kh', type=int, dest='skiphgt', default=16,
                      help='Step between windows down (default: %(default)s).')
+    win.add_argument('--vmax', '--maximum-velocity', type=int, dest='max_vel',
+                     help='Maximum mesurable velocity in m/y (not counting gross offsets), converted to a maximum displacement using --days')
+    win.add_argument('--days', type=int, dest='days',
+                    help='Number of days between the two images (to adapt search windo with --vmax and/or compute gross offsets from velocities)')
 
     # gross offset
     gross = parser.add_argument_group('Initial gross offset')
@@ -79,8 +83,6 @@ def create_parser():
                        help='Varying gross offset input file (int32 pairs (down, across), one per window)')
     gross.add_argument('--gv', '--gross-velocity-file', type=str, nargs=2, metavar=('DOWN', 'ACCROSS'), dest='gross_velocity_file', 
                        help='Velocity maps to define varying gross offsets (rasters read with GDAL).')
-    gross.add_argument('--days', type=int, dest='days',
-                       help='Number of days between the two images (to compute gross offsets from velocities)')
     gross.add_argument('--mg', '--merge-gross-offset', type=int, dest='merge_gross_offset', default=1,
                        help='Whether to merge gross offset to the output offset image (default: %(default)s).')
 
@@ -188,6 +190,12 @@ def window_grid(ref, sec, gross, inps):
     their centers in the bounding box if given
     @return the first window (start down, start across) and the numbers of windows (down, across)
     """
+
+    if inps.max_vel and inps.days:
+        inps.srchgt = round(abs(inps.max_vel * inps.days / (365.25 * ref.gt[5])))
+        inps.srcwidth = round(abs(inps.max_vel * inps.days / (365.25 * ref.gt[1])))
+        print(f"search window size adapted to a maximum velocity of {inps.max_vel} m/y on {inps.days} days: {inps.srcwidth} x {inps.srchgt}")
+
     axes = []
     for n_ref, n_sec, win, srch, step, g, origin, res, k in (
             (ref.length, sec.length, inps.winhgt, inps.srchgt, inps.skiphgt, gross[0], ref.gt[3], ref.gt[5], 1),
@@ -287,13 +295,13 @@ def estimate_displacements(inps):
 
     # the gross offsets: constant, from array file, from velocity fields
     if inps.gross == 0:
-        print(f'Set constant grossOffset {gross_shift}')
+        print(f'set constant grossOffset {gross_shift}')
         gross_down, gross_across = gross_shift
     elif inps.gross == 1:
-        print(f'Set varying grossOffset from file {inps.gross_offset_file}')     
+        print(f'set varying grossOffset from file {inps.gross_offset_file}')     
         gross_down, gross_across = gross_from_offset_file(inps.gross_offset_file)
     elif inps.gross >= 2:
-        print(f"Set varying grossOffset from velocity map files at {inps.gross_velocity_file[0]} and {inps.gross_velocity_file[1]}")
+        print(f"set varying grossOffset from velocity map files at {inps.gross_velocity_file[0]} and {inps.gross_velocity_file[1]}")
 
         try:
             from velocity_model import gross
