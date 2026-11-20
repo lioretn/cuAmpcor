@@ -324,7 +324,7 @@ def estimate_displacements(inps):
 
         gross(grossParameters({
             "search": search,
-            "output": os.path.join(work, "gross.bip"),
+            "output": os.path.join(work, "grossmap.bip"),
             "lon": os.path.join(work, "lon.tif"),
             "lat": os.path.join(work, "lat.tif"),
             "epsg": ref.crs.GetAuthorityCode(None),
@@ -338,7 +338,7 @@ def estimate_displacements(inps):
             "vy": inps.gross_velocity_file[1]
         }))
 
-        gross_down, gross_across = gross_from_offset_file(gross_shift, os.path.join(work, "gross.bip"))
+        gross_down, gross_across = gross_from_offset_file(gross_shift, os.path.join(work, "grossmap.bip"))
 
     # the ampcor run, with the intermediate outputs (in pixels) next to the output
     raw = {name: os.path.join(work, f'{name}.bip') for name in ('offset', 'gross', 'snr', 'cov', 'peak')}
@@ -386,7 +386,7 @@ def estimate_displacements(inps):
     # the windows with no-data pixels: the reference windows and the secondary search areas
     nodata = np.maximum(
         window_nodata(ref.nodata_mask(), start, n, step, size),
-        window_nodata(sec.nodata_mask(), tuple(start[k] + gross[k] - search[k] for k in (0, 1)), n, step,
+        window_nodata(sec.nodata_mask(), tuple(start[k] + gross_shift[k] - search[k] for k in (0, 1)), n, step,
                       tuple(size[k] + 2 * search[k] for k in (0, 1))))
     invalid = nodata > inps.max_nodata
     for data in bands.values():
