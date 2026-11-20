@@ -21,10 +21,10 @@ import argparse
 import os
 import sys
 import time
+import array
+import pycuampcor
 
 import numpy as np
-
-import pycuampcor
 
 EXAMPLE = '''example:
   # Sentinel-2 NIR bands (10 m) before and after an earthquake: 64 x 64 windows every 16 pixels
@@ -70,6 +70,19 @@ def create_parser():
                      help='Step between windows across (default: %(default)s).')
     win.add_argument('--kh', type=int, dest='skiphgt', default=16,
                      help='Step between windows down (default: %(default)s).')
+
+    # gross offset
+    gross = parser.add_argument_group('Initial gross offset')
+    gross.add_argument('-g', '--gross', type=int, dest='gross', default=0,
+                       help='Use varying gross offset (1 : from array, 2 : from velocity map) or not (0)')
+    gross.add_argument('--gf', '--gross-file', type=str, dest='gross_offset_file',
+                       help='Varying gross offset input file (int32 pairs (down, across), one per window)')
+    gross.add_argument('--gv', '--gross-velocity-file', type=str, nargs=2, metavar=('DOWN', 'ACCROSS'), dest='gross_velocity_file', 
+                       help='Velocity maps to define varying gross offsets (rasters read with GDAL).')
+    gross.add_argument('--days', type=int, dest='days',
+                       help='Number of days between the two images (to compute gross offsets from velocities)')
+    gross.add_argument('--mg', '--merge-gross-offset', type=int, dest='merge_gross_offset', default=1,
+                       help='Whether to merge gross offset to the output offset image (default: %(default)s).')
 
     # correlation
     corr = parser.add_argument_group('Correlation')
@@ -246,17 +259,81 @@ def estimate_displacements(inps):
 
     # the shift of the grids, as the gross offset (to the pixel), and the windows
     shift = grid_shift(ref, sec)
-    gross = tuple(int(round(s)) for s in shift)
-    start, n = window_grid(ref, sec, gross, inps)
+    gross_shift = tuple(int(round(s)) for s in shift)
+    start, n = window_grid(ref, sec, gross_shift, inps)
     size, step = (inps.winhgt, inps.winwidth), (inps.skiphgt, inps.skipwidth)
     search = (inps.srchgt, inps.srcwidth)
     print(f'image sizes (length x width): {ref.length} x {ref.width}, {sec.length} x {sec.width}')
     print(f'shift of the secondary grid (down, across): ({shift[0]:.3f}, {shift[1]:.3f}) pixels')
     print(f'windows: {n[0]} x {n[1]}, from pixel {start} of the reference, every {step} pixels')
 
-    # the ampcor run, with the intermediate outputs (in pixels) next to the output
+    # working directory
     work = f'{inps.outprefix}_ampcor'
     os.makedirs(work, exist_ok=True)
+
+    # varying gross offsets from a file of int32 pairs (down, across)
+    def gross_from_offset_file(gross_shift, offset_file):
+        gross_array = array.array('i')
+        with open(offset_file, 'rb') as f:
+            gross_array.frombytes(f.read())
+        if len(gross_array) != 2 * n[0] * n[1]:
+            raise RuntimeError(f'The gross offsets in {offset_file} do not match the number of '
+                               f'windows: {n[0]} by {n[1]} pairs of int32')
+        gross_down = list(gross_array[0::2])
+        print(max(gross_down))
+        gross_across = list(gross_array[1::2])
+        return [g + gross_shift[0] for g in gross_down], \
+            [g + gross_shift[1] for g in gross_across]
+
+    # the gross offsets: constant, from array file, from velocity fields
+    if inps.gross == 0:
+        print(f'Set constant grossOffset {gross_shift}')
+        gross_down, gross_across = gross_shift
+    elif inps.gross == 1:
+        print(f'Set varying grossOffset from file {inps.gross_offset_file}')     
+        gross_down, gross_across = gross_from_offset_file(inps.gross_offset_file)
+    elif inps.gross >= 2:
+        print(f"Set varying grossOffset from velocity map files at {inps.gross_velocity_file[0]} and {inps.gross_velocity_file[1]}")
+
+        try:
+            from velocity_model import gross
+        except ImportError:
+            raise RuntimeError('no velocity model available for gross offsets determination')
+
+        lon = np.linspace(ref.gt[0], ref.gt[0] + (ref.width-1) * ref.gt[1], ref.width)
+        lon = np.repeat(np.expand_dims(lon, axis=0), ref.length, axis=0)
+        write_geotiff(os.path.join(work, "lon.tif"), {"lon": lon}, ref.gt, ref.crs)
+        del lon
+
+        lat = np.linspace(ref.gt[3], ref.gt[3] + (ref.length-1) * ref.gt[5], ref.length, 'float16')
+        lat = np.repeat(np.expand_dims(lat, axis=-1), ref.width, axis=-1)
+        write_geotiff(os.path.join(work, "lat.tif"), {"lon": lat}, ref.gt, ref.crs)
+        del lat
+
+        class grossParameters:
+            def __init__(self, args):
+                for key, item in args.items():
+                    setattr(self, key, item)
+
+        gross(grossParameters({
+            "search": search,
+            "output": os.path.join(work, "gross.bip"),
+            "lon": os.path.join(work, "lon.tif"),
+            "lat": os.path.join(work, "lat.tif"),
+            "coord_epsg": ref.crs.GetAuthorityCode(None),
+            "days": inps.days,
+            "start": start,
+            "skip": step,
+            "window": size,
+            "number": n,
+            "step": 16,
+            "vx": inps.gross_velocity_file[0],
+            "vy": inps.gross_velocity_file[1]
+        }))
+
+        gross_down, gross_across = gross_from_offset_file(gross_shift, os.path.join(work, "gross.bip"))
+
+    # the ampcor run, with the intermediate outputs (in pixels) next to the output
     raw = {name: os.path.join(work, f'{name}.bip') for name in ('offset', 'gross', 'snr', 'cov', 'peak')}
     params = dict(
         referenceImageName=ref.source(work), referenceImageReader='gdal',
@@ -272,10 +349,10 @@ def estimate_displacements(inps):
         derampMethod='magnitude', rawDataOversamplingFactor=inps.raw_oversample,
         corrSurfaceOverSamplingFactor=inps.corr_oversample,
         corrSurfaceZoomInWindow=2 * inps.corr_srch_size * inps.raw_oversample,
-        corrStatWindowSize=inps.corr_stat_win_size, mergeGrossOffset=True,
+        corrStatWindowSize=inps.corr_stat_win_size, mergeGrossOffset=inps.merge_gross_offset,
         offsetImageName=raw['offset'], grossOffsetImageName=raw['gross'], snrImageName=raw['snr'],
         covImageName=raw['cov'], peakValueImageName=raw['peak'],
-        grossOffsetDown=gross[0], grossOffsetAcross=gross[1])
+        grossOffsetDown=gross_down, grossOffsetAcross=gross_across)
     if inps.cpu or not pycuampcor.has_cuda:
         ampcor = pycuampcor.PyCPUAmpcor(nThreads=inps.nthreads, **params)
     else:
