@@ -288,7 +288,6 @@ def estimate_displacements(inps):
             raise RuntimeError(f'The gross offsets in {offset_file} do not match the number of '
                                f'windows: {n[0]} by {n[1]} pairs of int32')
         gross_down = list(gross_array[0::2])
-        print(max(gross_down))
         gross_across = list(gross_array[1::2])
         return [g + gross_shift[0] for g in gross_down], \
             [g + gross_shift[1] for g in gross_across]
@@ -328,7 +327,7 @@ def estimate_displacements(inps):
             "output": os.path.join(work, "gross.bip"),
             "lon": os.path.join(work, "lon.tif"),
             "lat": os.path.join(work, "lat.tif"),
-            "coord_epsg": ref.crs.GetAuthorityCode(None),
+            "epsg": ref.crs.GetAuthorityCode(None),
             "days": inps.days,
             "start": start,
             "skip": step,

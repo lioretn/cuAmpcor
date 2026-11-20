@@ -41,7 +41,7 @@ def add_grid_options(parser):
     """The options of the geometry and of the window grid"""
     parser.add_argument('--lon', required=True, help='the longitude of the pixels of the reference image (GDAL raster)')
     parser.add_argument('--lat', required=True, help='the latitude of the pixels of the reference image (GDAL raster)')
-    parser.add_argument('--coord_epsg', type=int, default=4326,
+    parser.add_argument('--epsg', type=int, default=4326,
                         help='the EPSG of the coordinates stored in lon and lat rasters (default: %(default)s)')
     parser.add_argument('--days', type=float, required=True, help='the time between the images, in days')
     parser.add_argument('--start', type=int, nargs=2, required=True, metavar=('DOWN', 'ACROSS'),
@@ -72,7 +72,7 @@ class Geometry:
             raise RuntimeError('The windows (and --step) exceed the geometry rasters')
 
         coord_crs = osr.SpatialReference()
-        coord_crs.ImportFromEPSG(args.coord_epsg)
+        coord_crs.ImportFromEPSG(int(args.epsg))
         for s in (coord_crs, crs):
             s.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
         tr = osr.CoordinateTransformation(coord_crs, crs)
