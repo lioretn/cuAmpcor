@@ -304,7 +304,7 @@ def estimate_displacements(inps):
         print(f"set varying grossOffset from velocity map files at {inps.gross_velocity_file[0]} and {inps.gross_velocity_file[1]}")
 
         try:
-            from velocity_model import gross
+            from pycuampcor.velocity_model import gross
         except ImportError:
             raise RuntimeError('no velocity model available for gross offsets determination')
 
